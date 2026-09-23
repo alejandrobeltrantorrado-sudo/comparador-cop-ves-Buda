@@ -1,0 +1,8 @@
+{
+  "name": "comparador-remesas-cop-ves",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Comparador de remesas COP -> VES: apps de envío vs tu tasa de Buda. Sin dependencias.",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" }
+}

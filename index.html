@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Comparador remesas COP → VES · Buda</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --panel:#ffffff; --panel2:#eef1f6; --line:#dde2ea; --txt:#1a1e27; --muted:#616b7c;
+    --buda:#e7f7ee; --budaline:#1f9d63; --budatext:#0f7a47;
+    --win:#c62f36; --lose:#1f9d63; --accent:#2b6cff; --warn:#b8860b;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;}
+  header h1{font-size:17px;margin:0;font-weight:680;}
+  header .dot{color:var(--budatext);}
+  .controls{margin-left:auto;display:flex;gap:10px;align-items:center;}
+  button{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:9px 15px;font:inherit;font-weight:600;cursor:pointer;}
+  button:disabled{opacity:.5;}
+  label{color:var(--muted);font-size:13px;}
+  input,select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:9px;padding:8px 10px;font:inherit;}
+  .meta{color:var(--muted);font-size:12.5px;padding:12px 22px 0;}
+  main{padding:14px 22px 48px;max-width:1050px;}
+
+  .refbar{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px;}
+  .refcard{flex:1;min-width:200px;border:1px solid var(--line);border-radius:13px;padding:14px 16px;background:var(--panel);box-shadow:0 1px 3px rgba(20,30,50,.06);}
+  .refcard.buda{border-color:var(--budaline);background:var(--buda);}
+  .refcard .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+  .refcard .v{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums;}
+  .refcard.buda .v{color:var(--budatext);}
+  .refcard .s{font-size:12px;color:var(--muted);margin-top:2px;}
+
+  .wrap{overflow-x:auto;border:1px solid var(--line);border-radius:13px;background:var(--panel);box-shadow:0 1px 3px rgba(20,30,50,.06);}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:14px;}
+  th,td{text-align:right;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap;}
+  th:first-child,td:first-child,th:last-child,td:last-child{text-align:left;}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;background:var(--panel);}
+  tbody tr:last-child td{border-bottom:0;}
+  tr.buda td{background:var(--buda);}
+  tr.buda td:first-child{border-left:3px solid var(--budaline);font-weight:700;color:var(--budatext);}
+  .win{color:var(--win);} .lose{color:var(--lose);} .dim{color:var(--muted);}
+  .stale{color:var(--warn);font-size:11px;} .fresh{color:var(--lose);font-size:11px;}
+
+  .capture{margin:24px 0 0;padding:16px 18px;border:1px dashed var(--line);border-radius:13px;background:var(--panel);}
+  .capture h3{margin:0 0 4px;font-size:14px;} .capture p{margin:0 0 12px;color:var(--muted);font-size:12.5px;}
+  .capture form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .capture .msg{font-size:12.5px;margin-left:6px;}
+  .note{color:var(--muted);font-size:12.5px;margin-top:12px;}
+  .err{color:var(--win);}
+  h3.sec{font-size:15px;margin:22px 0 8px;}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot">●</span> Remesas COP → VES <span class="dim" style="font-weight:400">· competencia vs Buda</span></h1>
+  <div class="controls"><button id="go">Actualizar</button></div>
+</header>
+<div class="meta" id="meta">Cargando…</div>
+<main id="out"></main>
+
+<script>
+const fmt=new Intl.NumberFormat('es-CO',{maximumFractionDigits:2});
+const fmt6=new Intl.NumberFormat('es-CO',{maximumFractionDigits:6});
+const pct=(n)=>n==null?'—':(n>0?'+':'')+n.toFixed(2)+'%';
+let DATA=null;
+
+// Tasa mostrada como VES por 1 COP (número chico) y también "por 100.000 COP" (legible).
+function rateStr(r){ return r==null?'—':fmt6.format(r)+' VES'; }
+function per100k(r){ return r==null?'—':fmt.format(r*100000)+' VES'; }
+
+function refBar(){
+  const buda=DATA.reference;
+  let cards=`<div class="refcard buda"><div class="k">Tu tasa Buda (VES por 1 COP)</div>
+    <div class="v">${buda?rateStr(buda.rate):'sin registrar'}</div>
+    <div class="s">${buda?('por 100.000 COP → '+per100k(buda.rate)):'regístrala abajo (proveedor: Buda)'}</div></div>`;
+  // Referencia MontosVE (ancla del bolívar), si está configurada
+  const m=DATA.montosve||{};
+  if(m.enabled && m.raw){
+    cards+=`<div class="refcard"><div class="k">Referencia VES (MontosVE)</div>
+      <div class="v" style="font-size:15px;">activa</div>
+      <div class="s">BCV / Binance / Bybit · USD-EUR-USDT ↔ VES</div></div>`;
+  } else {
+    cards+=`<div class="refcard"><div class="k">Referencia VES (MontosVE)</div>
+      <div class="v" style="font-size:15px;color:var(--muted)">no configurada</div>
+      <div class="s">${(m.note||m.error||'define MONTOSVE_API_KEY')}</div></div>`;
+  }
+  return `<div class="refbar">${cards}</div>`;
+}
+
+function table(){
+  const rows=[...DATA.rows].sort((a,b)=>{
+    if(a.provider==='buda')return -1; if(b.provider==='buda')return 1; // Buda primero
+    return (b.rate||0)-(a.rate||0); // más VES = mejor, arriba
+  });
+  if(!rows.length) return '<p class="note">Aún no hay tasas registradas. Usa el formulario de abajo (empieza por tu tasa de Buda).</p>';
+  const name=(p)=>DATA.known[p]||p;
+  const body=rows.map(x=>{
+    let age='';
+    if(x.source==='manual'){ age=x.ageHours==null?'<span class="stale">sin fecha</span>'
+      :x.stale?`<span class="stale" title="Observado hace ${x.ageHours} h">⌛ ${x.ageHours}h</span>`
+      :`<span class="fresh">✓ ${x.ageHours}h</span>`; }
+    else if(x.source==='web'){ age='<span class="fresh">web</span>'; }
+    let verdict='<td class="dim">referencia</td>', delta='<td class="dim">—</td>';
+    if(x.provider!=='buda' && typeof x.budaMejor==='boolean'){
+      verdict=`<td>${x.budaMejor?'<span class="lose">Buda mejor</span>':'<span class="win">Buda peor</span>'}</td>`;
+      const dp=x.deltaPct; delta=`<td class="${x.budaMejor?'lose':'win'}">${dp==null?'—':pct(dp)}</td>`;
+    }
+    return `<tr class="${x.provider==='buda'?'buda':''}">
+      <td>${name(x.provider)}</td>
+      <td>${rateStr(x.rate)}</td>
+      <td>${per100k(x.rate)}</td>
+      ${delta}
+      ${verdict}
+      <td>${age}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="wrap"><table>
+    <thead><tr><th>Proveedor</th><th>Tasa (VES/COP)</th><th>Por 100.000 COP</th><th>Δ vs Buda</th><th>¿Buda mejor?</th><th>Dato</th></tr></thead>
+    <tbody>${body}</tbody></table></div>
+    <p class="note">Más VES por el mismo COP = mejor para quien envía. "Buda mejor" (verde) = Buda entrega más bolívares que ese competidor.</p>`;
+}
+
+function captureForm(){
+  const opts=Object.entries(DATA.known).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  return `<div class="capture">
+    <h3>Registrar / actualizar tasa</h3>
+    <p>Ingresa un envío real: cuántos <b>COP</b> mandas y cuántos <b>VES</b> llegan. Se calcula la tasa efectiva.
+       Registra primero <b>Buda</b> (tu referencia) y luego cada competidor.</p>
+    <form id="capForm">
+      <select id="cProv">${opts}</select>
+      <input id="cCop" type="number" step="1" placeholder="COP enviados" style="width:140px" />
+      <input id="cVes" type="number" step="0.0001" placeholder="VES recibidos" style="width:140px" />
+      <input id="cObs" placeholder="Observador (opcional)" style="width:150px" />
+      <button type="submit">Guardar</button>
+      <span class="msg dim" id="cMsg"></span>
+    </form>
+  </div>`;
+}
+
+function renderAll(){
+  document.getElementById('out').innerHTML=refBar()+'<h3 class="sec">Comparación</h3>'+table()+captureForm();
+  const f=document.getElementById('capForm');
+  if(f) f.addEventListener('submit',async(e)=>{
+    e.preventDefault(); const msg=document.getElementById('cMsg');
+    const body={ provider:document.getElementById('cProv').value,
+      copSent:document.getElementById('cCop').value||null, vesReceived:document.getElementById('cVes').value||null,
+      observer:document.getElementById('cObs').value||null };
+    msg.textContent='Guardando…'; msg.className='msg dim';
+    try{ const r=await fetch('/api/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json(); if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      msg.textContent='Guardado.'; msg.className='msg fresh'; load();
+    }catch(err){ msg.textContent='Error: '+err.message; msg.className='msg err'; }
+  });
+}
+
+async function load(){
+  const btn=document.getElementById('go'),meta=document.getElementById('meta');
+  btn.disabled=true; meta.textContent='Cargando…';
+  try{
+    const res=await fetch('/api/rates'); const j=await res.json();
+    if(!res.ok)throw new Error(j.detail||j.error||('HTTP '+res.status));
+    DATA=j;
+    meta.innerHTML=`Actualizado ${new Date(j.generatedAt).toLocaleTimeString('es-CO')} · corredor Colombia → Venezuela`;
+    renderAll();
+  }catch(err){ document.getElementById('out').innerHTML=''; meta.innerHTML=`<span class="err">Error: ${err.message}</span>`; }
+  finally{ btn.disabled=false; }
+}
+document.getElementById('go').addEventListener('click',load);
+load();
+</script>
+</body>
+</html>
