@@ -7,6 +7,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const PORT = process.env.PORT || 3000;
@@ -84,6 +85,48 @@ async function webRows() {
   return { rows, errors };
 }
 
+// ---- Buda Cross-Border Payments (tasa AUTOMÁTICA de referencia, API privada) ----
+// Auth Buda (verificado): HMAC-SHA384 hex. Headers X-SBTC-APIKEY/NONCE/SIGNATURE.
+// String firmado POST: "POST {path} {body_base64} {nonce}"  (nonce = microsegundos, creciente).
+// Requiere variables: BUDA_API_KEY, BUDA_API_SECRET y BUDA_CBP_QUOTE_BODY (el JSON exacto del
+// quote COP->VES que espera Buda, con su recipient_data). Path configurable por si difiere.
+function budaAuthHeaders(method, fullPath, bodyStr, KEY, SECRET) {
+  const nonce = String(Date.now() * 1000); // microsegundos aprox., entero creciente
+  let msg;
+  if (bodyStr) {
+    const b64 = Buffer.from(bodyStr).toString('base64');
+    msg = `${method} ${fullPath} ${b64} ${nonce}`;
+  } else {
+    msg = `${method} ${fullPath} ${nonce}`;
+  }
+  const sig = crypto.createHmac('sha384', SECRET).update(msg).digest('hex');
+  return { 'X-SBTC-APIKEY': KEY, 'X-SBTC-NONCE': nonce, 'X-SBTC-SIGNATURE': sig };
+}
+async function budaCBP() {
+  const KEY = process.env.BUDA_API_KEY, SECRET = process.env.BUDA_API_SECRET;
+  if (!KEY || !SECRET) return { configured: false, note: 'define BUDA_API_KEY y BUDA_API_SECRET' };
+  let body; try { body = JSON.parse(process.env.BUDA_CBP_QUOTE_BODY || 'null'); } catch { body = null; }
+  if (!body) return { configured: false, note: 'define BUDA_CBP_QUOTE_BODY (JSON del quote COP->VES con recipient_data)' };
+  const base = process.env.BUDA_API_BASE || 'https://www.buda.com';
+  const p = process.env.BUDA_CBP_QUOTE_PATH || '/api/v2/cross_border_payments/quotations';
+  const bodyStr = JSON.stringify(body);
+  const headers = { ...budaAuthHeaders('POST', p, bodyStr, KEY, SECRET), 'Content-Type': 'application/json', Accept: 'application/json' };
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), TIMEOUT);
+  try {
+    const res = await fetch(base + p, { method: 'POST', headers, body: bodyStr, signal: ctrl.signal });
+    if (!res.ok) throw new Error(`Buda CBP HTTP ${res.status}`);
+    const j = await res.json();
+    const q = j.quotation || j.data || j;
+    const src = num(q.amount_in_source_currency) || num(body.amount);
+    const dst = num(q.amount_in_destination_currency);
+    let rate = null;
+    if (src && dst) rate = dst / src;              // tasa efectiva VES por COP (all-in)
+    if (!(rate > 0)) rate = num(q.exchange_rate);  // fallback al campo directo
+    if (!(rate > 0)) throw new Error('Buda CBP sin tasa utilizable en la respuesta');
+    return { configured: true, row: { provider: 'buda', source: 'buda-cbp', rate, time: Date.now() / 1000 | 0 } };
+  } finally { clearTimeout(t); }
+}
+
 // ---- Referencia MontosVE (tasa de calle del VES: BCV / Binance / Bybit) -----
 // API con key (plan gratis). No es COP->VES ni las apps; es el ancla del bolívar.
 async function montosve() {
@@ -130,11 +173,20 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/rates') {
       const web = await webRows();
-      const rows = withVerdict(combine(manualRows(), web.rows));
+      let rows = combine(manualRows(), web.rows);
+      // Buda automático vía API CBP (si está configurado) pisa cualquier 'buda' manual.
+      let budaAuto = { configured: false }, budaError = null;
+      try {
+        const b = await budaCBP();
+        budaAuto = b;
+        if (b.configured && b.row) { rows = rows.filter((r) => r.provider !== 'buda'); rows.push(b.row); }
+      } catch (e) { budaError = String(e.message || e); }
+      rows = withVerdict(rows);
       const ref = await montosve();
       return sendJSON(res, 200, {
         generatedAt: Date.now(), known: KNOWN,
         reference: rows.find((r) => r.provider === 'buda') || null,
+        budaAuto: budaAuto.configured === true, budaNote: budaAuto.note || null, budaError,
         rows, webErrors: web.errors, montosve: ref,
       });
     }
