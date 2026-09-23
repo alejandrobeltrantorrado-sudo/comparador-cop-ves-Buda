@@ -71,9 +71,13 @@ function per100k(r){ return r==null?'—':fmt.format(r*100000)+' VES'; }
 
 function refBar(){
   const buda=DATA.reference;
+  const budaSub = DATA.budaAuto
+    ? (buda ? ('vía API Buda · automático · por 100.000 COP → '+per100k(buda.rate)) : 'API Buda conectada, sin tasa aún')
+    : (buda ? ('por 100.000 COP → '+per100k(buda.rate))
+            : ('automático apagado — '+(DATA.budaNote||DATA.budaError||'configura BUDA_API_KEY, BUDA_API_SECRET y BUDA_CBP_QUOTE_BODY')));
   let cards=`<div class="refcard buda"><div class="k">Tu tasa Buda (VES por 1 COP)</div>
-    <div class="v">${buda?rateStr(buda.rate):'sin registrar'}</div>
-    <div class="s">${buda?('por 100.000 COP → '+per100k(buda.rate)):'regístrala abajo (proveedor: Buda)'}</div></div>`;
+    <div class="v">${buda?rateStr(buda.rate):'sin tasa'}</div>
+    <div class="s">${budaSub}</div></div>`;
   // Referencia MontosVE (ancla del bolívar), si está configurada
   const m=DATA.montosve||{};
   if(m.enabled && m.raw){
